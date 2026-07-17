@@ -11,8 +11,8 @@
 - ReAct fallback: 思考→ツール呼び出し→反省は必要時のみ最大2ターン実行
 - 安全なツール: DuckDuckGo 検索、URL/HTML 抽出、fetch_json、sandbox 内ファイル読み取り、ローカルメモリ検索
 - 会話メモリ/感情: `data/memory.json` に出来事を蓄積、`data/emotion.json` で affection/mood/energy をユーザー別に管理
-- キャラ調整: `mafuyu_system_prompt.txt` と `mafuyu_fewshot_messages.json` を編集して口調や初期応答例を変更
-- LLM 切り替え: デフォルトは Ollama の Qwen3.5 role-based routing。`llm_hf.py` で HuggingFace/LoRA 推論にも切替可
+- キャラ調整: `mafuyu_ai/resources/system_prompt.txt` と `mafuyu_ai/resources/fewshot_messages.json` を編集して口調や初期応答例を変更
+- LLM 切り替え: デフォルトは Ollama の Qwen3.5 role-based routing。`mafuyu_ai/llm/huggingface.py` で HuggingFace/LoRA 推論にも切替可
 - 実行環境: CLI (`main.py`) と Discord (`discord_bot.py`) を同梱。Discord はメンション/DM 対応と自律発話ループあり
 - コーディング委任: Codex 向きの作業は自動実行せず、Codex-ready instruction として返答
 
@@ -61,13 +61,15 @@ Mafuyu uses adaptive routing and early exit to reduce average inference cost.
 Simple requests use the main model once. ReAct and heavy models are only used for uncertain or hard requests. Best-of-N is disabled by default and only intended for low-risk deep reasoning tasks.
 
 ## 技術概要
-- ReAct セッション: `mafuyu.py` がシステムプロンプト+few-shot+会話履歴を組み立て、最大3ターンで `<call>tool</call>` を検出・実行し、結果を反省プロンプトに掛けて最終応答を生成
-- ツールレイヤ: `tools.py` に検索/URL抽出/ファイル操作/Python実行/Codex連携などを実装。`execute_tool` で JSON 形式に統一し 2000 文字でトリミング
-- 記憶と感情: `memory.py` でキーワード検索可能な長期記憶を JSON に保存、`emotion.py` で affection/mood/energy を時間経過で回復させつつ管理
-- LLM バックエンド: `llm.py` が Ollama API を呼び出し、`llm_hf.py` で HuggingFace/LoRA 推論を選択可能 (`LLM_BACKEND` スイッチ)
-- Discord ボット: `discord_bot.py` がメンション/DM でセッションを分離し、DM は `DISCORD_ALLOWED_USER_ID` のみ許可、`FREE_CHAT_CHANNELS` はメンション不要。1時間以上経過かつ深夜帯外なら自律発話
-- CLI チャット: `main.py` はシンプルに入力→ReAct 応答を返す。`/clear` や `/exit` をサポート
-- Codex ブリッジ: `codex_run_sync` などで Codex CLI を新しいウィンドウで起動しログ監視 (`CODEX_LOG_TAIL_LINES`)。`agent.py/state.py` は Codex 連携エージェントのステート管理
+- ReAct セッション: `mafuyu_ai/core/session.py` が会話を調整し、プロンプト読込と応答解析は専用モジュールへ分離
+- ツールレイヤ: `mafuyu_ai/tools/` でポリシー、URL/パス安全性、Web、ファイル、Codex、実行レジストリを分離
+- 記憶と感情: `mafuyu_ai/core/memory.py` と `emotion.py` が永続状態を管理
+- LLM バックエンド: `mafuyu_ai/llm/client.py` が Ollama API、`router.py` が適応ルーティング、`agent_protocol.py` が旧エージェントJSONプロトコルを担当
+- Discord ボット: `mafuyu_ai/interfaces/discord.py` がメンション/DMを処理。ルートの `discord_bot.py` は互換エントリ
+- CLI チャット: `mafuyu_ai/interfaces/cli.py` が `/clear` や `/exit` を処理。ルートの `main.py` は互換エントリ
+- Codex ブリッジ: `mafuyu_ai/tools/codex.py` に明示的な特権操作として隔離し、デフォルト無効
+
+詳しい依存方向は [`docs/architecture.md`](docs/architecture.md) を参照してください。
 - データ/ログ: `data/` 配下に `memory.json`/`emotion.json`/`logs/` を自動生成。ファイル操作ツールは `data/workspace/` 配下に閉じ込め、Codex bridge も同じ sandbox 配下に配置
 
 ## 必要環境
@@ -80,8 +82,8 @@ Simple requests use the main model once. ReAct and heavy models are only used fo
 ## セットアップ
 1) リポジトリを取得
 ```bash
-git clone https://github.com/yourusername/mafuyu-sama.git
-cd mafuyu-sama
+git clone https://github.com/MikanNigata/mafuyu-AI.git
+cd mafuyu-AI
 ```
 2) (任意) 仮想環境を作成
 ```bash
@@ -134,7 +136,7 @@ copy .env.example discord.env
 | `codex_run_sync` / `codex_job_*` | デフォルト無効。Codex route は instruction だけ返す |
 
 ## 設定
-主要設定は `config.py` で変更できます。
+主要設定は `mafuyu_ai/settings.py` で変更できます。ルートの `config.py` は旧import向けの互換レイヤーです。
 
 | キー | デフォルト | 説明 |
 | --- | --- | --- |
@@ -151,26 +153,35 @@ copy .env.example discord.env
 | `FETCH_MAX_TEXT_BYTES` / `FETCH_MAX_JSON_BYTES` / `FETCH_MAX_HTML_BYTES` | `524288` / `524288` / `1048576` | URL 取得時の実受信上限。大きい応答でメモリを使い切らないための制限 |
 | `CODEX_LOG_TAIL_LINES` | `80` | Codex ログ tail 行数 |
 
-キャラクターや Few-shot は `mafuyu_system_prompt.txt` / `mafuyu_fewshot_messages.json` を編集。長期記憶と感情は `data/memory.json` / `data/emotion.json` に保存されます。
+キャラクターや Few-shot は `mafuyu_ai/resources/system_prompt.txt` / `mafuyu_ai/resources/fewshot_messages.json` を編集。長期記憶と感情は `data/memory.json` / `data/emotion.json` に保存されます。
 
 ## 構成
 ```
-mafuyu-sama/
-├── main.py                 # CLI チャットエントリ
-├── discord_bot.py          # Discord ボット
-├── mafuyu.py               # ReAct セッション/ツール判定/メモリ・感情管理
-├── llm.py                  # Ollama 連携
-├── llm_hf.py               # HuggingFace/LoRA バックエンド (オプション)
-├── tools.py                # ツール定義 (検索/URL/ファイル/Codex 等)
-├── memory.py               # 長期記憶ストア
-├── emotion.py              # 感情状態ストア
-├── agent.py, state.py      # Codex 向けエージェント基盤
-├── chat.py                 # シンプルチャット用ラッパー
-├── mafuyu_system_prompt.txt
-├── mafuyu_fewshot_messages.json
-├── help.txt                # ボット内ヘルプ
-└── requirements.txt
+mafuyu-AI/
+├── mafuyu_ai/
+│   ├── core/               # セッション、プロンプト、記憶、感情、応答解析
+│   ├── llm/                # Ollama、ルーター、推論予算、HF、agent protocol
+│   ├── tools/              # ポリシー、安全境界、Web、ファイル、Codex、registry
+│   ├── agent/              # 旧マルチステップagentと永続state
+│   ├── interfaces/         # CLI / Discordアダプター
+│   └── resources/          # system prompt、few-shot、help
+├── tests/
+├── docs/architecture.md
+├── pyproject.toml
+├── main.py                 # 互換CLIエントリ
+└── discord_bot.py          # 互換Discordエントリ
 ```
+
+## 開発
+
+```bash
+pip install -e ".[dev]"
+python -m unittest discover -s tests -v
+python -m compileall -q mafuyu_ai
+ruff check mafuyu_ai tests *.py
+```
+
+新しいコードは `mafuyu_ai.*` からimportしてください。ルート直下の旧モジュールは移行期間向けの互換レイヤーです。
 
 ## ライセンス
 MIT License

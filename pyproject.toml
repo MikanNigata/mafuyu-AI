@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mafuyu-ai"
+version = "0.1.0"
+description = "A local-LLM character agent for CLI and Discord"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "ddgs>=9.0.0",
+    "discord.py>=2.3.0",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "validators>=0.22.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.8.0"]
+huggingface = [
+    "accelerate>=0.25.0",
+    "bitsandbytes>=0.42.0",
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+]
+
+[project.scripts]
+mafuyu = "mafuyu_ai.interfaces.cli:main"
+mafuyu-discord = "mafuyu_ai.interfaces.discord:run"
+
+[tool.setuptools]
+py-modules = [
+    "agent",
+    "budget",
+    "chat",
+    "config",
+    "discord_bot",
+    "emotion",
+    "llm",
+    "llm_hf",
+    "mafuyu",
+    "main",
+    "memory",
+    "router",
+    "state",
+    "tools",
+]
+
+[tool.setuptools.packages.find]
+include = ["mafuyu_ai*"]
+
+[tool.setuptools.package-data]
+mafuyu_ai = ["resources/*.json", "resources/*.txt"]
